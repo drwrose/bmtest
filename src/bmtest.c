@@ -1,10 +1,11 @@
 #include <pebble.h>
+#include "bwd.h"
 
 static Window *window;
 static TextLayer *name_layer;
 static TextLayer *format_layer;
 static BitmapLayer *bitmap_layer;
-static GBitmap *bitmap;
+BitmapWithData bitmap;
 
 int bitmap_index = 0;
 
@@ -26,18 +27,16 @@ BitmapDef bitmap_defs[NUM_BITMAPS] = {
 static void inc_bitmap(int inc_value) {
   bitmap_index = (bitmap_index + NUM_BITMAPS + inc_value) % NUM_BITMAPS;
 
-  if (bitmap != NULL) {
-    gbitmap_destroy(bitmap);
-  }
-  bitmap = gbitmap_create_with_resource(bitmap_defs[bitmap_index].resource_id);
-  bitmap_layer_set_bitmap(bitmap_layer, bitmap);
+  bwd_destroy(&bitmap);
+  bitmap = rle_bwd_create(bitmap_defs[bitmap_index].resource_id);
+  bitmap_layer_set_bitmap(bitmap_layer, bitmap.bitmap);
   text_layer_set_text(name_layer, bitmap_defs[bitmap_index].name);
 
   const char *format_str = "Unknown";
 #ifdef PBL_PLATFORM_APLITE
   format_str = "1Bit";  // Only thing supported by Aplite
 #else  //  PBL_PLATFORM_APLITE
-  switch (gbitmap_get_format(bitmap)) {
+  switch (gbitmap_get_format(bitmap.bitmap)) {
   case GBitmapFormat1Bit:
     format_str = "1Bit";
     break;

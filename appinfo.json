@@ -17,33 +17,33 @@
       "media": [
           {
               "name": "BM64",
-              "file": "bm64.png",
-              "type": "png"
+              "file": "bm64.rle",
+              "type": "raw"
           },
           {
               "name": "BM16",
-              "file": "bm16.png",
-              "type": "png"
+              "file": "bm16.rle",
+              "type": "raw"
           },
           {
               "name": "BM4",
-              "file": "bm4.png",
-              "type": "png"
+              "file": "bm4.rle",
+              "type": "raw"
           },
           {
               "name": "BM4_GRAYSCALE",
-              "file": "bm4_grayscale.png",
-              "type": "png"
+              "file": "bm4_grayscale.rle",
+              "type": "raw"
           },
           {
               "name": "BM2",
-              "file": "bm2.png",
-              "type": "png"
+              "file": "bm2.rle",
+              "type": "raw"
           },
           {
               "name": "BM2_GRAYSCALE",
-              "file": "bm2_grayscale.png",
-              "type": "png"
+              "file": "bm2_grayscale.rle",
+              "type": "raw"
           }
       ]
   }
