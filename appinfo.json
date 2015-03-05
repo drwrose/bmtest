@@ -1,0 +1,50 @@
+{
+  "uuid": "677f6f1b-d6d9-4112-9712-fa6c3e49236d",
+  "shortName": "bmtest",
+  "longName": "bmtest",
+  "companyName": "MakeAwesomeHappen",
+  "versionCode": 1,
+  "versionLabel": "1.0",
+  "sdkVersion": "3",
+  "targetPlatforms": ["aplite", "basalt"],
+  "watchapp": {
+    "watchface": false
+  },
+  "appKeys": {
+    "dummy": 0
+  },
+  "resources": {
+      "media": [
+          {
+              "name": "BM64",
+              "file": "bm64.png",
+              "type": "png"
+          },
+          {
+              "name": "BM16",
+              "file": "bm16.png",
+              "type": "png"
+          },
+          {
+              "name": "BM4",
+              "file": "bm4.png",
+              "type": "png"
+          },
+          {
+              "name": "BM4_GRAYSCALE",
+              "file": "bm4_grayscale.png",
+              "type": "png"
+          },
+          {
+              "name": "BM2",
+              "file": "bm2.png",
+              "type": "png"
+          },
+          {
+              "name": "BM2_GRAYSCALE",
+              "file": "bm2_grayscale.png",
+              "type": "png"
+          }
+      ]
+  }
+}
