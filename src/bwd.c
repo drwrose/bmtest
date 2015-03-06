@@ -5,30 +5,6 @@
 //#include "../resources/generated_config.h"
 #define SUPPORT_RLE 1
 
-// From bitmapgen.py:
-/*
-# Bitmap struct (NB: All fields are little-endian)
-#         (uint16_t) row_size_bytes
-#         (uint16_t) info_flags
-#                         bit 0 : reserved (must be zero for bitmap files)
-#                    bits  1- 2 : bitmap_format (0=b/w, 1=ARGB 8 bit)
-#                    bits  3-11 : reserved, must be 0
-#                    bits 12-15 : file version
-#         (int16_t)  bounds.origin.x
-#         (int16_t)  bounds.origin.y
-#         (int16_t)  bounds.size.w
-#         (int16_t)  bounds.size.h
-#         (uint32_t) image data (word-aligned, 0-padded rows of bits)
-*/
-typedef struct {
-  uint16_t row_size_bytes;
-  uint16_t info_flags;
-  int16_t origin_x;
-  int16_t origin_y;
-  int16_t size_w;
-  int16_t size_h;
-} BitmapDataHeader;
-
 BitmapWithData bwd_create(GBitmap *bitmap, void *data) {
   BitmapWithData bwd;
   bwd.bitmap = bitmap;
@@ -247,6 +223,137 @@ void unscreen_bitmap(GBitmap *image) {
   }
 }
 
+typedef void Packer(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop);
+
+// Packs a series of identical 1-bit values into (*dp) beginning at bit (*b).
+void pack_1bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
+  assert(*dp < dp_stop);
+  if (value) {
+    // Generate count 1-bits.
+    int b1 = (*b) + count;
+    if (b1 < 8) {
+      // We're still within the same byte.
+      int mask = ~((1 << (*b)) - 1);
+      mask &= ((1 << (b1)) - 1);
+      *(*dp) |= mask;
+      (*b) = b1;
+    } else {
+      // We've crossed over a byte boundary.
+      *(*dp) |= ~((1 << (*b)) - 1);
+      ++(*dp);
+      (*b) += 8;
+      while (b1 / 8 != (*b) / 8) {
+        assert(*dp < dp_stop);
+        (*dp) = 0xff;
+        ++(*dp);
+        (*b) += 8;
+      }
+      b1 = b1 % 8;
+      assert(*dp < dp_stop);
+      (*dp) |= ((1 << (b1)) - 1);
+      (*b) = b1;
+    }
+  } else {
+    // Skip over count 0-bits.
+    (*b) += count;
+    (*dp) += (*b) / 8;
+    (*b) = (*b) % 8;
+  }
+}
+
+// Packs a series of identical 2-bit values into (*dp) beginning at bit (*b).
+void pack_2bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
+  assert(*dp < dp_stop);
+  assert(count > 0);
+
+  if (value != 0) {
+    while (count > 0 && (*b) < 8) {
+      // Put stuff in the middle of the first byte.
+      assert(*dp < dp_stop);
+      *(*dp) |= (value << (6 - (*b)));
+      (*b) += 2;
+      --count;
+    }
+    if ((*b) == 8) {
+      ++(*dp);
+      (*b) = 0;
+    }
+    assert((*b) == 0);
+    uint8_t byte = (value << 6) | (value << 4) | (value << 2) | value;
+    while (count >= 4) {
+      // Now pack a series of quad-values.
+      assert(*dp < dp_stop);
+      *(*dp) == byte;
+      ++(*dp);
+      count -= 4;
+    }
+    while (count > 0) {
+      // Put stuff in the beginning of the last byte.
+      assert((*b) < 8);
+      assert(*dp < dp_stop);
+      *(*dp) |= (value << (6 - (*b)));
+      (*b) += 2;
+      --count;
+    }
+
+  } else {
+    // Skip over count 0-chunkss.
+    (*b) += count * 2;
+    (*dp) += (*b) / 8;
+    (*b) = (*b) % 8;
+  }    
+}
+
+
+// Packs a series of identical 4-bit values into (*dp) beginning at bit (*b).
+void pack_4bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
+  assert(*dp < dp_stop);
+  assert(count > 0);
+
+  if (value != 0) {
+    if ((*b) == 4) {
+      // Start with the odd remainder at the end of the byte.
+      assert(*dp < dp_stop);
+      *(*dp) |= value;
+      ++(*dp);
+      (*b) = 0;
+      --count;
+    }
+    uint8_t byte = (value << 4) | value;
+    while (count >= 2) {
+      // Now pack a series of double-nibbles.
+      assert(*dp < dp_stop);
+      *(*dp) == byte;
+      ++(*dp);
+      count -= 2;
+    }
+    if (count == 1) {
+      // Pack one more half-byte.
+      assert(*dp < dp_stop);
+      *(*dp) |= (value << 4);
+      (*b) = 4;
+    }
+
+  } else {
+    // Skip over count 0-nibbles.
+    (*b) += count * 4;
+    (*dp) += (*b) / 8;
+    (*b) = (*b) % 8;
+  }    
+}
+
+// Packs a series of identical 8-bit values into (*dp).
+void pack_8bit(int value, int count, int *, uint8_t **dp, uint8_t *dp_stop) {
+  assert(*dp < dp_stop);
+
+  while (count > 0 && (*dp) < dp_stop) {
+    assert((*dp) < dp_stop);
+    *(*dp) = value;
+    ++(*dp);
+    --count;
+  }
+}
+
 // Initialize a bitmap from an rle-encoded resource.  The returned
 // bitmap must be released with bwd_destroy().  See make_rle.py for
 // the program that generates these rle sequences.
@@ -273,32 +380,30 @@ rle_bwd_create(int resource_id) {
   uint8_t vo_hi = rbuffer_getc(&rb);
   unsigned int vo = (vo_hi << 8) | vo_lo;
 
-  uint8_t pa_lo = rbuffer_getc(&rb);
-  uint8_t pa_hi = rbuffer_getc(&rb);
-  unsigned int pa = (pa_hi << 8) | pa_lo;
+  uint8_t po_lo = rbuffer_getc(&rb);
+  uint8_t po_hi = rbuffer_getc(&rb);
+  unsigned int po = (po_hi << 8) | po_lo;
 
   int do_unscreen = (n & 0x80);
   n = n & 0x7f;
 
-  /*
-  int pixels_per_byte = 0;
+  Packer *packer_func = NULL;
   switch (format) {
   case GBitmapFormat1Bit:
   case GBitmapFormat1BitPalette:
-    pixels_per_byte = 8;
+    packer_func = pack_1bit;
     break;
   case GBitmapFormat2BitPalette:
-    pixels_per_byte = 4;
+    packer_func = pack_2bit;
     break;
   case GBitmapFormat4BitPalette:
-    pixels_per_byte = 2;
+    packer_func = pack_4bit;
     break;
   case GBitmapFormat8Bit:
-    pixels_per_byte = 1;
+    packer_func = pack_8bit;
     break;
   }
-  assert(pixels_per_byte != 0);
-  */
+  assert(packer_func != NULL);
 
   GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
   if (image == NULL) {
@@ -310,43 +415,35 @@ rle_bwd_create(int resource_id) {
   size_t data_size = height * stride;
   app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "stride = %d, data_size = %d", stride, data_size);
 
-  uint8_t *dp = bitmap_data;
-  uint8_t *dp_stop = dp + data_size;
-
   Rl2Unpacker rl2;
   rl2unpacker_init(&rl2, &rb, n);
-  
-  if (format == GBitmapFormat8Bit) {
-    // Unpack an 8-bit ARGB file.
-    
+
+  RBuffer rb_vo;
+  RBuffer rb_po;
+
+  if (vo != 0) {
     // Now the values start at vo; this means the original rb buffer
     // gets shortened to that point, and we create a new rb_vo buffer
     // to read the values data which begins at that point.
     rbuffer_set_limit(&rb, vo);
-    RBuffer rb_vo;
     rbuffer_init(resource_id, &rb_vo, vo);
+  }
 
-    // Begin reading.
-    int count = rl2unpacker_getc(&rl2);
-    while (count != EOF) {
-      int value = rbuffer_getc(&rb_vo);
-      while (count > 0 && dp < dp_stop) {
-        assert(dp < dp_stop);
-        *dp = value;
-        ++dp;
-        --count;
-      }
-      count = rl2unpacker_getc(&rl2);
-    }
+  if (po != 0) {
+    // And the palette starts at po, so the same thing happens again.
+    rbuffer_set_limit(&rb_vo, po);
+    rbuffer_init(resource_id, &rb_po, po);
+  }
 
-    rbuffer_deinit(&rb_vo);
-
-  } else if (format == GBitmapFormat1Bit) {
-    // Unpack a 1-bit B&W file.
+  uint8_t *dp = bitmap_data;
+  uint8_t *dp_stop = dp + data_size;
+  int b = 0;
+  
+  if (format == GBitmapFormat1Bit) {
+    // Unpack a 1-bit file.
 
     // The initial value is 0.
     int value = 0;
-    int b = 0;
     int count = rl2unpacker_getc(&rl2);
     if (count != EOF) {
       assert(count > 0);
@@ -354,46 +451,28 @@ rle_bwd_create(int resource_id) {
       --count;
     }
     while (count != EOF) {
-      assert(dp < dp_stop);
-      if (value) {
-        // Generate count 1-bits.
-        int b1 = b + count;
-        if (b1 < 8) {
-          // We're still within the same byte.
-          int mask = ~((1 << (b)) - 1);
-          mask &= ((1 << (b1)) - 1);
-          *dp |= mask;
-          b = b1;
-        } else {
-          // We've crossed over a byte boundary.
-          *dp |= ~((1 << (b)) - 1);
-          ++dp;
-          b += 8;
-          while (b1 / 8 != b / 8) {
-            assert(dp < dp_stop);
-            *dp = 0xff;
-            ++dp;
-            b += 8;
-          }
-          b1 = b1 % 8;
-          assert(dp < dp_stop);
-          *dp |= ((1 << (b1)) - 1);
-          b = b1;
-        }
-      } else {
-        // Skip over count 0-bits.
-        b += count;
-        dp += b / 8;
-        b = b % 8;
-      }
+      pack_1bit(value, count, &b, &dp, dp_stop);
       value = 1 - value;
+      count = rl2unpacker_getc(&rl2);
+    }
+
+  } else {
+    // Unpack a 2-, 4-, or 8-bit file.
+
+    // Begin reading.
+    int count = rl2unpacker_getc(&rl2);
+    while (count != EOF) {
+      int value = rbuffer_getc(&rb_vo);
+      (*packer_func)(value, count, &b, &dp, dp_stop);
       count = rl2unpacker_getc(&rl2);
     }
   }
 
   app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "wrote %d bytes", dp - bitmap_data);
-  assert(dp == dp_stop);
+  assert(dp == dp_stop && b == 0);
   rbuffer_deinit(&rb);
+  rbuffer_deinit(&rb_vo);
+  rbuffer_deinit(&rb_po);
   
   if (do_unscreen) {
     unscreen_bitmap(image);
