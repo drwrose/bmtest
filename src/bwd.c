@@ -280,6 +280,7 @@ rle_bwd_create(int resource_id) {
   int do_unscreen = (n & 0x80);
   n = n & 0x7f;
 
+  /*
   int pixels_per_byte = 0;
   switch (format) {
   case GBitmapFormat1Bit:
@@ -297,6 +298,7 @@ rle_bwd_create(int resource_id) {
     break;
   }
   assert(pixels_per_byte != 0);
+  */
 
   GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
   if (image == NULL) {

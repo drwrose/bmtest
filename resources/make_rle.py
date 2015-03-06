@@ -58,7 +58,7 @@ def unscreen(image):
                 image.putpixel((x, y), 255 - image.getpixel((x, y)))
     return image
 
-def generate_pixels_b(image, stride):
+def generate_pixels_1bit(image, stride):
     """ This generator yields a sequence of 0/255 values for the 1-bit
     pixels of the image.  We extend the row to stride * 8 pixels. """
 
@@ -73,7 +73,7 @@ def generate_pixels_b(image, stride):
 
     raise StopIteration
 
-def generate_pixels_c(image):
+def generate_pixels_8bit(image):
     """ This generator yields a sequence of 0..255 values for the
     8-bit pixels of the image. """
 
@@ -89,7 +89,7 @@ def generate_pixels_c(image):
 
     raise StopIteration
 
-def generate_rle_aplite(source):
+def generate_rle_1bit(source):
     """ This generator yields a sequence of run lengths of a binary
     (B&W) input--the input is either 0 or 255, so the rle is a simple
     sequence of positive numbers representing alternate values, and
@@ -105,12 +105,16 @@ def generate_rle_aplite(source):
     while True:
         while current == next:
             count += 1
-            next = source.next()
+            try:
+                next = source.next()
+            except StopIteration:
+                yield count
+                raise StopIteration
         yield count
         current = next
         count = 0
 
-def generate_rle_basalt(source):
+def generate_rle_8bit(source):
     """ This generator yields a sequence of run lengths of a color
     input--the input is a sequence of 0..255 values, so the rle is a
     sequence of (value, count) pairs. """
@@ -285,8 +289,8 @@ def make_rle_image_1bit(rleFilename, image):
     stride = ((w + 31) / 32) * 4
     assert stride <= 0xff
 
-    rle_normal = list(generate_rle_aplite(generate_pixels_b(image, stride)))
-    rle_unscreened = list(generate_rle_aplite(generate_pixels_b(unscreened, stride)))
+    rle_normal = list(generate_rle_1bit(generate_pixels_1bit(image, stride)))
+    rle_unscreened = list(generate_rle_1bit(generate_pixels_1bit(unscreened, stride)))
 
     # Find the best n for this image.
     result = None
@@ -315,14 +319,14 @@ def make_rle_image_1bit(rleFilename, image):
     rle.write(result)
     rle.close()
     
-    print '%s: %s vs. %s' % (rleFilename, 4 + len(result), fullSize)
+    print '%s: %s vs. %s' % (rleFilename, 8 + len(result), fullSize)
 
 def make_rle_image_8bit(rleFilename, image):
     image = image.convert('RGBA')
     w, h = image.size
     fullSize = w * h
 
-    values_rle = generate_rle_basalt(generate_pixels_c(image))
+    values_rle = generate_rle_8bit(generate_pixels_8bit(image))
     values, rle = zip(*list(values_rle))
     rle = list(rle)
 
@@ -355,7 +359,7 @@ def make_rle_image_8bit(rleFilename, image):
     rle.write(pack_rle(values, 8))
     rle.close()
     
-    print '%s: %s vs. %s' % (rleFilename, 6 + len(result) + len(values), fullSize)
+    print '%s: %s vs. %s' % (rleFilename, 8 + len(result) + len(values), fullSize)
             
 def make_rle_image(rleFilename, image, formatType = 'auto'):
     if formatType == 'auto' and rleFilename.find('~color') != -1:
@@ -413,29 +417,43 @@ def unpack_rle_file(rleFilename):
     rb = open(rleFilename, 'rb')
     width = ord(rb.read(1))
     height = ord(rb.read(1))
-    stride = ord(rb.read(1))
     n = ord(rb.read(1))
+    format = ord(rb.read(1))
+    vo_lo = ord(rb.read(1))
+    vo_hi = ord(rb.read(1))
+    vo = (vo_hi << 8) | vo_lo
+    pa_lo = ord(rb.read(1))
+    pa_hi = ord(rb.read(1))
+    pa = (pa_hi << 8) | pa_lo
+
     do_unscreen = ((n & 0x80) != 0)
-    data_8bit = (stride == 0)
-    if data_8bit:
-        stride = width
     n = n & 0x7f
 
-    if data_8bit:
+    if (format == GBitmapFormat1Bit or format == GBitmapFormat1BitPalette):
+        pixels_per_byte = 8
+    elif format == GBitmapFormat2BitPalette:
+        pixels_per_byte = 4
+    elif format == GBitmapFormat4BitPalette:
+        pixels_per_byte = 2
+    elif format == GBitmapFormat8Bit:
+        pixels_per_byte = 1
+    else:
+        assert False
+
+    stride = (width + pixels_per_byte - 1) / pixels_per_byte
+    stride = ((stride + 3) * 4) / 4
+
+    if vo:
+        data = rb.read(vo - 6)
+    else:
+        data = rb.read()
+    unpacker = Rl2Unpacker(data, n)
+    rle = unpacker.getList()
+
+    if format == GBitmapFormat8Bit:
         # Unpack an 8-bit ARGB file.
 
-        # Get the offset into the file at which the values start.
-        vo_lo = ord(rb.read(1))
-        vo_hi = ord(rb.read(1))
-        vo = (vo_hi << 8) | vo_lo
-
-        print "vo = %x" % (vo)
-
-        data = rb.read(vo - 6)
         values = map(ord, rb.read())
-
-        unpacker = Rl2Unpacker(data, n)
-        rle = unpacker.getList()
 
         pixels = []
         vi = 0
@@ -448,8 +466,36 @@ def unpack_rle_file(rleFilename):
             b = ((value) & 0x03) * 0x55
             value = (r, g, b, a)
             pixels += [value] * count
+        assert len(pixels) == width * height
 
         image = PIL.Image.new('RGBA', (width, height), 0)
+        
+        pi = 0
+        for yi in range(height):
+            for xi in range(width):
+                assert pi < len(pixels)
+                image.putpixel((xi, yi), pixels[pi])
+                pi += 1
+
+        assert pi == len(pixels)
+        return image
+
+    elif format == GBitmapFormat1Bit:
+        # Unpack a 1-bit B&W file.
+        pixels = []
+
+        # The initial value is 0.
+        value = 0
+
+        for count in rle:
+            pixels += [value] * count
+            value = 255 - value
+
+        # We discard the first, implicit black pixel; it's not part of the image.
+        pixels = pixels[1:]
+        assert len(pixels) == width * height
+
+        image = PIL.Image.new('1', (width, height), 0)
         
         pi = 0
         for yi in range(height):
