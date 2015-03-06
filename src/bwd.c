@@ -134,9 +134,10 @@ typedef struct {
   int n;
   int b;
   int bi;
+  bool zero_expands;
 } Rl2Unpacker;
 
-static void rl2unpacker_init(Rl2Unpacker *rl2, RBuffer *rb, int n) {
+static void rl2unpacker_init(Rl2Unpacker *rl2, RBuffer *rb, int n, bool zero_expands) {
   // assumption: n is an integer divisor of 8.
   assert(n * (8 / n) == 8);
 
@@ -144,6 +145,7 @@ static void rl2unpacker_init(Rl2Unpacker *rl2, RBuffer *rb, int n) {
   rl2->n = n;
   rl2->b = rbuffer_getc(rb);
   rl2->bi = 8;
+  rl2->zero_expands = zero_expands;
 }
 
 // Gets the next integer from the rl2 encoding.  Returns EOF at end.
@@ -156,19 +158,21 @@ static int rl2unpacker_getc(Rl2Unpacker *rl2) {
   int zero_count = 0;
   int bmask = (1 << rl2->n) - 1;
   int bv = (rl2->b & (bmask << (rl2->bi - rl2->n)));
-  while (bv == 0) {
-    ++zero_count;
-    rl2->bi -= rl2->n;
-    if (rl2->bi <= 0) {
-      rl2->b = rbuffer_getc(rl2->rb);
-      rl2->bi = 8;
-      if (rl2->b == EOF) {
-        return EOF;
+  if (rl2->zero_expands) {
+    while (bv == 0) {
+      ++zero_count;
+      rl2->bi -= rl2->n;
+      if (rl2->bi <= 0) {
+        rl2->b = rbuffer_getc(rl2->rb);
+        rl2->bi = 8;
+        if (rl2->b == EOF) {
+          return EOF;
+        }
       }
+      bv = (rl2->b & (bmask << (rl2->bi - rl2->n)));
     }
-    bv = (rl2->b & (bmask << (rl2->bi - rl2->n)));
   }
-
+    
   // Infer from that the number of chunks, and hence the number of
   // bits, that make up the value we will extract.
   int num_chunks = (zero_count + 1);
@@ -228,6 +232,7 @@ typedef void Packer(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop
 // Packs a series of identical 1-bit values into (*dp) beginning at bit (*b).
 void pack_1bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
   assert(*dp < dp_stop);
+  
   if (value) {
     // Generate count 1-bits.
     int b1 = (*b) + count;
@@ -244,13 +249,15 @@ void pack_1bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
       (*b) += 8;
       while (b1 / 8 != (*b) / 8) {
         assert(*dp < dp_stop);
-        (*dp) = 0xff;
+        *(*dp) = 0xff;
         ++(*dp);
         (*b) += 8;
       }
       b1 = b1 % 8;
-      assert(*dp < dp_stop);
-      (*dp) |= ((1 << (b1)) - 1);
+      if (b1 != 0) {
+        assert(*dp < dp_stop);
+        *(*dp) |= ((1 << (b1)) - 1);
+      }
       (*b) = b1;
     }
   } else {
@@ -261,14 +268,17 @@ void pack_1bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
   }
 }
 
+#ifndef PBL_PLATFORM_APLITE
+// The following functions are needed for unpacking advanced color
+// modes not supported on Aplite.
+
 // Packs a series of identical 2-bit values into (*dp) beginning at bit (*b).
 void pack_2bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
   assert(*dp < dp_stop);
-  assert(count > 0);
 
   if (value != 0) {
     while (count > 0 && (*b) < 8) {
-      // Put stuff in the middle of the first byte.
+      // Put stuff in the middle or at the end of the first byte.
       assert(*dp < dp_stop);
       *(*dp) |= (value << (6 - (*b)));
       (*b) += 2;
@@ -281,14 +291,14 @@ void pack_2bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
     assert((*b) == 0);
     uint8_t byte = (value << 6) | (value << 4) | (value << 2) | value;
     while (count >= 4) {
-      // Now pack a series of quad-values.
+      // Now pack a full byte's worth at a time.
       assert(*dp < dp_stop);
-      *(*dp) == byte;
+      *(*dp) = byte;
       ++(*dp);
       count -= 4;
     }
     while (count > 0) {
-      // Put stuff in the beginning of the last byte.
+      // Put stuff at the beginning of the last byte.
       assert((*b) < 8);
       assert(*dp < dp_stop);
       *(*dp) |= (value << (6 - (*b)));
@@ -297,7 +307,7 @@ void pack_2bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
     }
 
   } else {
-    // Skip over count 0-chunkss.
+    // Skip over count 0-chunks.
     (*b) += count * 2;
     (*dp) += (*b) / 8;
     (*b) = (*b) % 8;
@@ -308,11 +318,10 @@ void pack_2bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
 // Packs a series of identical 4-bit values into (*dp) beginning at bit (*b).
 void pack_4bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
   assert(*dp < dp_stop);
-  assert(count > 0);
 
   if (value != 0) {
-    if ((*b) == 4) {
-      // Start with the odd remainder at the end of the byte.
+    if (count > 0 && (*b) == 4) {
+      // Pack a nibble at the end of the first byte.
       assert(*dp < dp_stop);
       *(*dp) |= value;
       ++(*dp);
@@ -321,14 +330,14 @@ void pack_4bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
     }
     uint8_t byte = (value << 4) | value;
     while (count >= 2) {
-      // Now pack a series of double-nibbles.
+      // Now pack a full byte's worth at a time.
       assert(*dp < dp_stop);
-      *(*dp) == byte;
+      *(*dp) = byte;
       ++(*dp);
       count -= 2;
     }
     if (count == 1) {
-      // Pack one more half-byte.
+      // Pack one more nibble at the top of the next byte.
       assert(*dp < dp_stop);
       *(*dp) |= (value << 4);
       (*b) = 4;
@@ -343,7 +352,7 @@ void pack_4bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
 }
 
 // Packs a series of identical 8-bit values into (*dp).
-void pack_8bit(int value, int count, int *, uint8_t **dp, uint8_t *dp_stop) {
+void pack_8bit(int value, int count, int *b, uint8_t **dp, uint8_t *dp_stop) {
   assert(*dp < dp_stop);
 
   while (count > 0 && (*dp) < dp_stop) {
@@ -384,22 +393,36 @@ rle_bwd_create(int resource_id) {
   uint8_t po_hi = rbuffer_getc(&rb);
   unsigned int po = (po_hi << 8) | po_lo;
 
+  assert(vo != 0 && po >= vo && po <= rb._total_size);
+  
   int do_unscreen = (n & 0x80);
   n = n & 0x7f;
 
   Packer *packer_func = NULL;
+  size_t palette_count = 0;
+  int vn = 0;
   switch (format) {
-  case GBitmapFormat1Bit:
   case GBitmapFormat1BitPalette:
+    palette_count = 2;
+    // fall through.
+  case GBitmapFormat1Bit:
     packer_func = pack_1bit;
     break;
+    
   case GBitmapFormat2BitPalette:
+    vn = 2;
+    palette_count = 4;
     packer_func = pack_2bit;
     break;
+    
   case GBitmapFormat4BitPalette:
+    vn = 4;
+    palette_count = 16;
     packer_func = pack_4bit;
     break;
+
   case GBitmapFormat8Bit:
+    vn = 8;
     packer_func = pack_8bit;
     break;
   }
@@ -413,33 +436,29 @@ rle_bwd_create(int resource_id) {
   uint8_t *bitmap_data = gbitmap_get_data(image);
   assert(bitmap_data != NULL);
   size_t data_size = height * stride;
-  app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "stride = %d, data_size = %d", stride, data_size);
+  //app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "stride = %d, data_size = %d", stride, data_size);
 
   Rl2Unpacker rl2;
-  rl2unpacker_init(&rl2, &rb, n);
+  rl2unpacker_init(&rl2, &rb, n, true);
 
+  // The values start at vo; this means the original rb buffer gets
+  // shortened to that point.
+  rbuffer_set_limit(&rb, vo);
+
+  // We create a new rb_vo buffer to read the values data which begins
+  // at vo.
   RBuffer rb_vo;
-  RBuffer rb_po;
-
-  if (vo != 0) {
-    // Now the values start at vo; this means the original rb buffer
-    // gets shortened to that point, and we create a new rb_vo buffer
-    // to read the values data which begins at that point.
-    rbuffer_set_limit(&rb, vo);
+  Rl2Unpacker rl2_vo;
+  if (vn != 0) {
     rbuffer_init(resource_id, &rb_vo, vo);
-  }
-
-  if (po != 0) {
-    // And the palette starts at po, so the same thing happens again.
-    rbuffer_set_limit(&rb_vo, po);
-    rbuffer_init(resource_id, &rb_po, po);
+    rl2unpacker_init(&rl2_vo, &rb_vo, vn, false);
   }
 
   uint8_t *dp = bitmap_data;
   uint8_t *dp_stop = dp + data_size;
   int b = 0;
   
-  if (format == GBitmapFormat1Bit) {
+  if (packer_func == pack_1bit) {
     // Unpack a 1-bit file.
 
     // The initial value is 0.
@@ -462,22 +481,120 @@ rle_bwd_create(int resource_id) {
     // Begin reading.
     int count = rl2unpacker_getc(&rl2);
     while (count != EOF) {
-      int value = rbuffer_getc(&rb_vo);
+      int value = rl2unpacker_getc(&rl2_vo);
       (*packer_func)(value, count, &b, &dp, dp_stop);
       count = rl2unpacker_getc(&rl2);
     }
   }
 
-  app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "wrote %d bytes", dp - bitmap_data);
+  //app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "wrote %d bytes", dp - bitmap_data);
   assert(dp == dp_stop && b == 0);
   rbuffer_deinit(&rb);
   rbuffer_deinit(&rb_vo);
-  rbuffer_deinit(&rb_po);
   
   if (do_unscreen) {
     unscreen_bitmap(image);
   }
 
+  if (palette_count != 0) {
+    // Now we need to apply the palette.
+    ResHandle rh = resource_get_handle(resource_id);
+    size_t total_size = resource_size(rh);
+    assert(total_size > po);
+    size_t palette_size = total_size - po;
+    assert(palette_size == palette_count);
+    GColor *palette = (GColor *)malloc(palette_size);
+    size_t bytes_read = resource_load_byte_range(rh, po, (uint8_t *)palette, palette_size);
+    assert(bytes_read == palette_size);
+
+    gbitmap_set_palette(image, palette, true);
+  }
+  
   return bwd_create(image, NULL);
 }
+
+#else  // PBL_PLATFORM_APLITE
+
+// Here's the simpler Aplite implementation, which only supports GColorFormat1Bit.
+
+// Initialize a bitmap from an rle-encoded resource.  The returned
+// bitmap must be released with bwd_destroy().  See make_rle.py for
+// the program that generates these rle sequences.
+BitmapWithData
+rle_bwd_create(int resource_id) {
+  app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "rle_bwd_create(%d)", resource_id);
+
+  // RLE header (NB: All fields are little-endian)
+  //         (uint8_t)  width
+  //         (uint8_t)  height
+  //         (uint8_t)  n (number of chunks of pixels to take at a time; unscreen if 0x80 set)
+  //         (uint8_t)  format (see below)
+  //         (uint16_t) offset to start of values, or 0 if format == 0
+  //         (uint16_t) offset to start of palette, or 0 if format <= 1
+  
+  RBuffer rb;
+  rbuffer_init(resource_id, &rb, 0);
+  int width = rbuffer_getc(&rb);
+  int height = rbuffer_getc(&rb);
+  int n = rbuffer_getc(&rb);
+  int format = rbuffer_getc(&rb);
+  if (format != 0) {
+    app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "cannot support format %d", format);
+    return bwd_create(NULL, NULL);
+  }
+
+  /*uint8_t vo_lo = */rbuffer_getc(&rb);
+  /*uint8_t vo_hi = */rbuffer_getc(&rb);
+  /*uint8_t po_lo = */rbuffer_getc(&rb);
+  /*uint8_t po_hi = */rbuffer_getc(&rb);
+  
+  int do_unscreen = (n & 0x80);
+  n = n & 0x7f;
+
+  GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
+  if (image == NULL) {
+    return bwd_create(NULL, NULL);
+  }
+  int stride = gbitmap_get_bytes_per_row(image);
+  uint8_t *bitmap_data = gbitmap_get_data(image);
+  assert(bitmap_data != NULL);
+  size_t data_size = height * stride;
+  //app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "stride = %d, data_size = %d", stride, data_size);
+
+  Rl2Unpacker rl2;
+  rl2unpacker_init(&rl2, &rb, n, true);
+
+  uint8_t *dp = bitmap_data;
+  uint8_t *dp_stop = dp + data_size;
+  int b = 0;
+  
+  // Unpack a 1-bit file.
+
+  // The initial value is 0.
+  int value = 0;
+  int count = rl2unpacker_getc(&rl2);
+  if (count != EOF) {
+    assert(count > 0);
+    // We discard the first, implicit black pixel; it's not part of the image.
+    --count;
+  }
+  while (count != EOF) {
+    pack_1bit(value, count, &b, &dp, dp_stop);
+    value = 1 - value;
+    count = rl2unpacker_getc(&rl2);
+  }
+
+  //app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "wrote %d bytes", dp - bitmap_data);
+  assert(dp == dp_stop && b == 0);
+  rbuffer_deinit(&rb);
+  
+  if (do_unscreen) {
+    unscreen_bitmap(image);
+  }
+  
+  return bwd_create(image, NULL);
+}
+
+#endif // PBL_PLATFORM_APLITE
+
 #endif  // SUPPORT_RLE

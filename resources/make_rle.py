@@ -357,6 +357,9 @@ def make_rle_image_1bit(rleFilename, image):
         assert verify == rle_normal
 
     format = GBitmapFormat1Bit
+
+    #print "n = %s, format = %s, vo = %s, po = %s" % (n, format, vo, vo)
+
     rle = open(rleFilename, 'wb')
     rle.write('%c%c%c%c%c%c%c%c' % (w, h, n, format, vo_lo, vo_hi, vo_lo, vo_hi))
     rle.write(result)
@@ -454,7 +457,7 @@ def make_rle_image_basalt(rleFilename, image):
     po_lo = po & 0xff
     po_hi = (po >> 8) & 0xff
 
-    print "n = %s, format = %s, vo = %s, po = %s" % (n, format, vo, po)
+    #print "n = %s, format = %s, vo = %s, po = %s" % (n, format, vo, po)
 
     rle = open(rleFilename, 'wb')
     rle.write('%c%c%c%c%c%c%c%c' % (w, h, n, format, vo_lo, vo_hi, po_lo, po_hi))
@@ -471,13 +474,13 @@ def make_rle_image_basalt(rleFilename, image):
     print '%s: %s vs. %s' % (rleFilename, 8 + len(result) + len(values), fullSize)
             
 def make_rle_image(rleFilename, image, platformType = 'auto'):
-    if platformType == 'auto' and rleFilename.find('~color') != -1:
-        platformType = 'basalt'
+    if platformType == 'auto' and rleFilename.find('~bw') != -1:
+        platformType = 'aplite'
 
-    if platformType == 'basalt':
-        return make_rle_image_basalt(rleFilename, image)
-    else:
+    if platformType == 'aplite':
         return make_rle_image_1bit(rleFilename, image)
+    else:
+        return make_rle_image_basalt(rleFilename, image)
 
 def make_rle(filename, prefix = 'resources/', useRle = True, platformType = 'auto'):
     if useRle:
@@ -487,7 +490,7 @@ def make_rle(filename, prefix = 'resources/', useRle = True, platformType = 'aut
         make_rle_image(prefix + rleFilename, image, platformType = platformType)
         return rleFilename, 'raw'
     else:
-        ptype = 'pbi'
+        ptype = 'png'
         print filename
         return filename, ptype
 
@@ -538,7 +541,7 @@ def unpack_rle_file(rleFilename):
     do_unscreen = ((n & 0x80) != 0)
     n = n & 0x7f
 
-    print "n = %s, format = %s, vo = %s, po = %s" % (n, format, vo, po)
+    #print "n = %s, format = %s, vo = %s, po = %s" % (n, format, vo, po)
 
     if (format == GBitmapFormat1Bit or format == GBitmapFormat1BitPalette):
         pixels_per_byte = 8
@@ -575,31 +578,33 @@ def unpack_rle_file(rleFilename):
     unpacker = Rl2Unpacker(rle_data, n, zero_expands = True)
     rle = unpacker.getList()
 
+    #print "rle = %s, values = %s, palette = %s" % (len(rle), len(values), len(palette))
+
     if vn == 1:
         # Unpack a 1-bit file.
-        values = []
+        pixels = []
 
         # The initial value is 0.
         value = 0
 
         for count in rle:
-            values += [value] * count
+            pixels += [value] * count
             value = 1 - value
 
         # We discard the first, implicit black pixel; it's not part of the image
-        values = values[1:]
-        assert len(values) == width * height
+        pixels = pixels[1:]
+        assert len(pixels) == width * height
 
     else:
         # Unpack some other depth file.
-        values = []
+        pixels = []
         vi = 0
         for count in rle:
             value = values[vi]
             vi += 1
-            values += [value] * count
+            pixels += [value] * count
 
-    assert len(values) == width * height
+    assert len(pixels) == width * height
 
     if format == GBitmapFormat1Bit:
         image = PIL.Image.new('1', (width, height), 0)
@@ -611,18 +616,14 @@ def unpack_rle_file(rleFilename):
 
     if palette:
         # Apply the palette.
-        pixels = []
-        for value in values:
-            pixels.append(palette[value])
+        for pi in range(len(pixels)):
+            pixels[pi] = palette[pixels[pi]]
 
     elif format == GBitmapFormat8Bit:
-        pixels = []
-        for value in values:
-            pixels.append(unpack_argb8[value])
+        # Expand the packed ARGB8 format.
+        for pi in range(len(pixels)):
+            pixels[pi] = unpack_argb8(pixels[pi])
         
-    else:
-        pixels = values
-
     pi = 0
     for yi in range(height):
         for xi in range(width):
