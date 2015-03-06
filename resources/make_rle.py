@@ -31,6 +31,8 @@ Options:
 #         (uint16_t) offset to start of values, or 0 if format == 0
 #         (uint16_t) offset to start of palette, or 0 if format <= 1
 
+RLEHeaderSize = 8
+
 # Format codes (almost matches pebble.h):
 GBitmapFormat1Bit        = 0
 GBitmapFormat8Bit        = 1
@@ -73,6 +75,18 @@ def generate_pixels_1bit(image, stride):
 
     raise StopIteration
 
+def make_argb8(pixel):
+    """ Given an (r, g, b, a) tuple returned by PIL, return the Basalt
+    packed ARGB8 equivalent. """
+    
+    r, g, b, a = pixel
+    if a == 0:
+        value = 0
+    else:
+        value = (a & 0xc0) | ((r & 0xc0) >> 2) | ((g & 0xc0) >> 4) | ((b & 0xc0) >> 6)
+    return value
+    
+
 def generate_pixels_8bit(image):
     """ This generator yields a sequence of 0..255 values for the
     8-bit pixels of the image. """
@@ -80,11 +94,21 @@ def generate_pixels_8bit(image):
     w, h = image.size
     for y in range(h):
         for x in range(w):
-            r, g, b, a = image.getpixel((x, y))
-            if a == 0:
-                value = 0
-            else:
-                value = (a & 0xc0) | ((r & 0xc0) >> 2) | ((g & 0xc0) >> 4) | ((b & 0xc0) >> 6)
+            value = make_argb8(image.getpixel((x, y)))
+            yield value
+
+    raise StopIteration
+
+def generate_pixels_palette(image, palette):
+    """ This generator yields a sequence of 0..n values for the pixels
+    of the image, indexing into the palette. """
+
+    w, h = image.size
+    for y in range(h):
+        for x in range(w):
+            pixel = image.getpixel((x, y))
+            value = palette.index(pixel)
+            assert value != -1
             yield value
 
     raise StopIteration
@@ -114,9 +138,9 @@ def generate_rle_1bit(source):
         current = next
         count = 0
 
-def generate_rle_8bit(source):
+def generate_rle_pairs(source):
     """ This generator yields a sequence of run lengths of a color
-    input--the input is a sequence of 0..255 values, so the rle is a
+    input--the input is a sequence of numeric values, so the rle is a
     sequence of (value, count) pairs. """
 
     current = source.next()
@@ -321,12 +345,42 @@ def make_rle_image_1bit(rleFilename, image):
     
     print '%s: %s vs. %s' % (rleFilename, 8 + len(result), fullSize)
 
-def make_rle_image_8bit(rleFilename, image):
+def make_rle_image_basalt(rleFilename, image):
     image = image.convert('RGBA')
     w, h = image.size
     fullSize = w * h
 
-    values_rle = generate_rle_8bit(generate_pixels_8bit(image))
+    # Check the number of unique colors in the image to determine the
+    # precise image type.
+    colors = image.getcolors(16)
+
+    if colors is None:
+        # We have a full-color image.
+        palette = None
+        format = GBitmapFormat8Bit
+        vn = 8
+    else:
+        # We have a palettized image.
+        palette = zip(*colors)[1]
+        if len(colors) <= 2:
+            palette = palette.sort()
+            if palette == [(0, 0, 0, 255), (255, 255, 255, 255)]:
+                # This is a special case: it's really a 1-bit B&W image.
+                return make_rle_image_1bit(rleFilename, image)
+            # It's a 1-bit image with two specific colors.
+            format = GBitmapFormat1BitPalette
+            vn = 1
+        elif len(colors) <= 4:
+            format = GBitmapFormat2BitPalette
+            vn = 2
+        else:
+            format = GBitmapFormat4BitPalette
+            vn = 4
+
+    if palette is None:
+        values_rle = generate_rle_pairs(generate_pixels_8bit(image))
+    else:
+        values_rle = generate_rle_pairs(generate_pixels_palette(image, palette))
     values, rle = zip(*list(values_rle))
     rle = list(rle)
 
@@ -347,16 +401,29 @@ def make_rle_image_8bit(rleFilename, image):
     assert verify == rle
 
     # Get the offset into the file at which the values start.
-    vo = 6 + len(result)
+    vo = RLEHeaderSize + len(result)
     assert(vo < 0x10000)
     vo_lo = vo & 0xff
     vo_hi = (vo >> 8) & 0xff
 
-    format = GBitmapFormat8Bit
+    values_result = pack_rle(values, vn)
+
+    # Also get the offset into the file at which the palette starts.
+    po = 0
+    if palette is not None:
+        po = vo + len(values_result)
+    assert(po < 0x10000)
+    po_lo = po & 0xff
+    po_hi = (po >> 8) & 0xff
+
     rle = open(rleFilename, 'wb')
-    rle.write('%c%c%c%c%c%c%c%c' % (w, h, n, format, vo_hi, vo_lo, 0, 0))
+    rle.write('%c%c%c%c%c%c%c%c' % (w, h, n, format, vo_hi, vo_lo, po_hi, po_lo))
     rle.write(result)
-    rle.write(pack_rle(values, 8))
+    rle.write(values_result)
+    if palette is not None:
+        for pixel in palette:
+            rle.write(make_argb8(pixel))
+            
     rle.close()
     
     print '%s: %s vs. %s' % (rleFilename, 8 + len(result) + len(values), fullSize)
@@ -366,7 +433,7 @@ def make_rle_image(rleFilename, image, formatType = 'auto'):
         formatType = 'basalt'
 
     if formatType == 'basalt':
-        return make_rle_image_8bit(rleFilename, image)
+        return make_rle_image_basalt(rleFilename, image)
     else:
         return make_rle_image_1bit(rleFilename, image)
 
@@ -444,16 +511,17 @@ def unpack_rle_file(rleFilename):
     stride = ((stride + 3) * 4) / 4
 
     if vo:
-        data = rb.read(vo - 6)
+        data = rb.read(vo - RLEHeaderSize)
+        values = map(ord, rb.read())
+
     else:
         data = rb.read()
+        values = []
     unpacker = Rl2Unpacker(data, n)
     rle = unpacker.getList()
 
     if format == GBitmapFormat8Bit:
         # Unpack an 8-bit ARGB file.
-
-        values = map(ord, rb.read())
 
         pixels = []
         vi = 0
