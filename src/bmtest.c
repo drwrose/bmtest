@@ -2,6 +2,9 @@
 #include "bwd.h"
 
 static Window *window;
+static Layer *background_layer;
+BitmapWithData background;
+
 static TextLayer *name_layer;
 static TextLayer *format_layer;
 static BitmapLayer *bitmap_layer;
@@ -14,12 +17,14 @@ typedef struct {
   const char *name;
 } BitmapDef;
 
-#define NUM_BITMAPS 6
+#define NUM_BITMAPS 8
 BitmapDef bitmap_defs[NUM_BITMAPS] = {
   { RESOURCE_ID_BM64, "bm64" },
   { RESOURCE_ID_BM16, "bm16" },
+  { RESOURCE_ID_BM16_ALPHA, "bm16_alpha" },
   { RESOURCE_ID_BM4, "bm4" },
   { RESOURCE_ID_BM4_GRAYSCALE, "bm4_grayscale" },
+  { RESOURCE_ID_BM4_ALPHA, "bm4_alpha" },
   { RESOURCE_ID_BM2, "bm2" },
   { RESOURCE_ID_BM2_GRAYSCALE, "bm2_grayscale" },
 };
@@ -74,20 +79,32 @@ static void click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_DOWN, down_click_handler);
 }
 
+
+void background_layer_update_callback(Layer *me, GContext *ctx) {
+  GRect destination = layer_get_frame(me);
+  graphics_draw_bitmap_in_rect(ctx, background.bitmap, destination);
+}
+
 static void window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
 
+  background_layer = layer_create(bounds);
+  layer_set_update_proc(background_layer, &background_layer_update_callback);
+  layer_add_child(window_layer, background_layer);
+  background = png_bwd_create(RESOURCE_ID_CHECKERS);
+
   bitmap_layer = bitmap_layer_create((GRect) { .origin = { 40, 22 }, .size = { 64, 64 } });
-  layer_add_child(window_layer, bitmap_layer_get_layer(bitmap_layer));
+  bitmap_layer_set_compositing_mode(bitmap_layer, GCompOpSet);
+  layer_add_child(background_layer, bitmap_layer_get_layer(bitmap_layer));
 
   name_layer = text_layer_create((GRect) { .origin = { 0, 108 }, .size = { bounds.size.w, 20 } });
   text_layer_set_text_alignment(name_layer, GTextAlignmentCenter);
-  layer_add_child(window_layer, text_layer_get_layer(name_layer));
+  layer_add_child(background_layer, text_layer_get_layer(name_layer));
 
   format_layer = text_layer_create((GRect) { .origin = { 0, 128 }, .size = { bounds.size.w, 20 } });
   text_layer_set_text_alignment(format_layer, GTextAlignmentCenter);
-  layer_add_child(window_layer, text_layer_get_layer(format_layer));
+  layer_add_child(background_layer, text_layer_get_layer(format_layer));
 
   inc_bitmap(0);
 }

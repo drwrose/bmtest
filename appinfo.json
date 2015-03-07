@@ -16,6 +16,11 @@
   "resources": {
       "media": [
           {
+              "name": "CHECKERS",
+              "file": "checkers.png",
+              "type": "png"
+          },
+          {
               "name": "BM64",
               "file": "bm64.rle",
               "type": "raw"
@@ -26,6 +31,11 @@
               "type": "raw"
           },
           {
+              "name": "BM16_ALPHA",
+              "file": "bm16_alpha.rle",
+              "type": "raw"
+          },
+          {
               "name": "BM4",
               "file": "bm4.rle",
               "type": "raw"
@@ -33,6 +43,11 @@
           {
               "name": "BM4_GRAYSCALE",
               "file": "bm4_grayscale.rle",
+              "type": "raw"
+          },
+          {
+              "name": "BM4_ALPHA",
+              "file": "bm4_alpha.rle",
               "type": "raw"
           },
           {

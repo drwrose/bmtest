@@ -269,7 +269,7 @@ class Rl2Unpacker:
                     self.si += 1
                     self.bi = 8
                     if self.si >= len(self.str):
-                        return 0
+                        return -1
 
                     b = ord(self.str[self.si])
                 bv = b & (bmask << (self.bi - self.n))
