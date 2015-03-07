@@ -5,10 +5,9 @@
 //#include "../resources/generated_config.h"
 #define SUPPORT_RLE 1
 
-BitmapWithData bwd_create(GBitmap *bitmap, void *data) {
+BitmapWithData bwd_create(GBitmap *bitmap) {
   BitmapWithData bwd;
   bwd.bitmap = bitmap;
-  bwd.data = data;
   return bwd;
 }
 
@@ -16,10 +15,6 @@ void bwd_destroy(BitmapWithData *bwd) {
   if (bwd->bitmap != NULL) {
     gbitmap_destroy(bwd->bitmap);
     bwd->bitmap = NULL;
-  }
-  if (bwd->data != NULL) {
-    free(bwd->data);
-    bwd->data = NULL;
   }
 }
 
@@ -30,7 +25,7 @@ void bwd_destroy(BitmapWithData *bwd) {
 // The returned bitmap must be released with bwd_destroy().
 BitmapWithData png_bwd_create(int resource_id) {
   GBitmap *image = gbitmap_create_with_resource(resource_id);
-  return bwd_create(image, NULL);
+  return bwd_create(image);
 }
 
 #ifndef SUPPORT_RLE
@@ -430,7 +425,7 @@ rle_bwd_create(int resource_id) {
 
   GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
   if (image == NULL) {
-    return bwd_create(NULL, NULL);
+    return bwd_create(NULL);
   }
   int stride = gbitmap_get_bytes_per_row(image);
   uint8_t *bitmap_data = gbitmap_get_data(image);
@@ -510,7 +505,7 @@ rle_bwd_create(int resource_id) {
     gbitmap_set_palette(image, palette, true);
   }
   
-  return bwd_create(image, NULL);
+  return bwd_create(image);
 }
 
 #else  // PBL_PLATFORM_APLITE
@@ -540,7 +535,7 @@ rle_bwd_create(int resource_id) {
   int format = rbuffer_getc(&rb);
   if (format != 0) {
     app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "cannot support format %d", format);
-    return bwd_create(NULL, NULL);
+    return bwd_create(NULL);
   }
 
   /*uint8_t vo_lo = */rbuffer_getc(&rb);
@@ -553,7 +548,7 @@ rle_bwd_create(int resource_id) {
 
   GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
   if (image == NULL) {
-    return bwd_create(NULL, NULL);
+    return bwd_create(NULL);
   }
   int stride = gbitmap_get_bytes_per_row(image);
   uint8_t *bitmap_data = gbitmap_get_data(image);
@@ -592,7 +587,7 @@ rle_bwd_create(int resource_id) {
     unscreen_bitmap(image);
   }
   
-  return bwd_create(image, NULL);
+  return bwd_create(image);
 }
 
 #endif // PBL_PLATFORM_APLITE
