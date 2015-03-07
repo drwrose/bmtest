@@ -17,8 +17,8 @@
       "media": [
           {
               "name": "CHECKERS",
-              "file": "checkers.png",
-              "type": "png"
+              "file": "checkers.rle",
+              "type": "raw"
           },
           {
               "name": "BM64",

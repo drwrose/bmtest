@@ -3,14 +3,17 @@
 
 static Window *window;
 static Layer *background_layer;
-BitmapWithData background;
+BitmapWithData checkers;
 
 static TextLayer *name_layer;
 static TextLayer *format_layer;
 static BitmapLayer *bitmap_layer;
 BitmapWithData bitmap;
 
+int background_index = 0;
 int bitmap_index = 0;
+
+#define NUM_BACKGROUNDS 6
 
 typedef struct {
   int resource_id;
@@ -28,6 +31,12 @@ BitmapDef bitmap_defs[NUM_BITMAPS] = {
   { RESOURCE_ID_BM2, "bm2" },
   { RESOURCE_ID_BM2_GRAYSCALE, "bm2_grayscale" },
 };
+
+static void inc_background(int inc_value) {
+  background_index = (background_index + NUM_BACKGROUNDS + inc_value) % NUM_BACKGROUNDS;
+
+  layer_mark_dirty(background_layer);
+}
 
 static void inc_bitmap(int inc_value) {
   bitmap_index = (bitmap_index + NUM_BITMAPS + inc_value) % NUM_BITMAPS;
@@ -63,6 +72,7 @@ static void inc_bitmap(int inc_value) {
 }
 
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
+  inc_background(1);
 }
 
 static void up_click_handler(ClickRecognizerRef recognizer, void *context) {
@@ -82,7 +92,36 @@ static void click_config_provider(void *context) {
 
 void background_layer_update_callback(Layer *me, GContext *ctx) {
   GRect destination = layer_get_frame(me);
-  graphics_draw_bitmap_in_rect(ctx, background.bitmap, destination);
+
+  switch (background_index) {
+  case 0:
+    graphics_draw_bitmap_in_rect(ctx, checkers.bitmap, destination);
+    return;
+
+#ifndef PBL_PLATFORM_APLITE
+  case 1:
+    graphics_context_set_fill_color(ctx, GColorFromRGB(0x00, 0x00, 0x55));
+    break;
+
+  case 2:
+    graphics_context_set_fill_color(ctx, GColorFromRGB(0x00, 0x00, 0xcc));
+    break;
+
+  case 3:
+    graphics_context_set_fill_color(ctx, GColorFromRGB(0x00, 0x55, 0xcc));
+    break;
+
+  case 4:
+    graphics_context_set_fill_color(ctx, GColorFromRGB(0xff, 0xff, 0xff));
+    break;
+
+  case 5:
+    graphics_context_set_fill_color(ctx, GColorFromRGB(0x00, 0x00, 0x00));
+    break;
+#endif  // PBL_PLATFORM_APLITE
+  }
+
+  graphics_fill_rect(ctx, destination, 0, GCornerNone);
 }
 
 static void window_load(Window *window) {
@@ -92,7 +131,7 @@ static void window_load(Window *window) {
   background_layer = layer_create(bounds);
   layer_set_update_proc(background_layer, &background_layer_update_callback);
   layer_add_child(window_layer, background_layer);
-  background = png_bwd_create(RESOURCE_ID_CHECKERS);
+  checkers = rle_bwd_create(RESOURCE_ID_CHECKERS);
 
   bitmap_layer = bitmap_layer_create((GRect) { .origin = { 40, 22 }, .size = { 64, 64 } });
   bitmap_layer_set_compositing_mode(bitmap_layer, GCompOpSet);
