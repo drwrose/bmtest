@@ -546,7 +546,7 @@ rle_bwd_create(int resource_id) {
   int do_unscreen = (n & 0x80);
   n = n & 0x7f;
 
-  GBitmap *image = gbitmap_create_blank(GSize(width, height), format);
+  GBitmap *image = gbitmap_create_blank(GSize(width, height));
   if (image == NULL) {
     return bwd_create(NULL);
   }

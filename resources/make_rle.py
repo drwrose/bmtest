@@ -353,8 +353,10 @@ def make_rle_image_1bit(rleFilename, image):
     verify = unpacker.getList()
     if n & 0x80:
         assert verify == rle_unscreened
+        pixels = list(generate_pixels_1bit(unscreened, stride))
     else:
         assert verify == rle_normal
+        pixels = list(generate_pixels_1bit(image, stride))
 
     format = GBitmapFormat1Bit
 
@@ -559,8 +561,11 @@ def unpack_rle_file(rleFilename):
         assert False
 
     stride = (width + pixels_per_byte - 1) / pixels_per_byte
-    stride = ((stride + 3) * 4) / 4
+    stride = ((stride + 3) / 4) * 4
 
+    # Expand the width as needed to include the extra padding pixels.
+    width2 = (stride * pixels_per_byte)
+    
     assert(RLEHeaderSize == rb.tell())
 
     rle_data = rb.read(vo - RLEHeaderSize)
@@ -593,7 +598,6 @@ def unpack_rle_file(rleFilename):
 
         # We discard the first, implicit black pixel; it's not part of the image
         pixels = pixels[1:]
-        assert len(pixels) == width * height
 
     else:
         # Unpack some other depth file.
@@ -604,13 +608,13 @@ def unpack_rle_file(rleFilename):
             vi += 1
             pixels += [value] * count
 
-    assert len(pixels) == width * height
+    assert len(pixels) == width2 * height
 
     if format == GBitmapFormat1Bit:
-        image = PIL.Image.new('1', (width, height), 0)
+        image = PIL.Image.new('1', (width2, height), 0)
         palette = [0, 255]
     else:
-        image = PIL.Image.new('RGBA', (width, height), 0)
+        image = PIL.Image.new('RGBA', (width2, height), 0)
         if palette:
             palette = map(unpack_argb8, palette)
 
@@ -626,7 +630,7 @@ def unpack_rle_file(rleFilename):
         
     pi = 0
     for yi in range(height):
-        for xi in range(width):
+        for xi in range(width2):
             assert pi < len(pixels)
             image.putpixel((xi, yi), pixels[pi])
             pi += 1

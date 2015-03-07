@@ -15,13 +15,6 @@
 
 #endif  // PBL_PLATFORM_APLITE
 
-// Weirdly different function prototypes.
-#ifdef PBL_PLATFORM_APLITE
-
-#define gbitmap_create_blank(size, format) gbitmap_create_blank(size)
-
-#endif  // PBL_PLATFORM_APLITE
-
 
 // GBitmapFormat definition.
 #ifdef PBL_PLATFORM_APLITE
