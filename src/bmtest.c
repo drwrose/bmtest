@@ -42,6 +42,10 @@ static void inc_bitmap(int inc_value) {
   bitmap_index = (bitmap_index + NUM_BITMAPS + inc_value) % NUM_BITMAPS;
 
   bwd_destroy(&bitmap);
+
+  app_log(APP_LOG_LEVEL_INFO, __FILE__, __LINE__, "inc_bitmap, heap = %d bytes free of %d total", heap_bytes_free(), heap_bytes_free() + heap_bytes_used());
+
+
   bitmap = rle_bwd_create(bitmap_defs[bitmap_index].resource_id);
   bitmap_layer_set_bitmap(bitmap_layer, bitmap.bitmap);
   text_layer_set_text(name_layer, bitmap_defs[bitmap_index].name);
